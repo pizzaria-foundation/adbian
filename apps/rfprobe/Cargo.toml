@@ -1,0 +1,15 @@
+[package]
+name = "rfprobe"
+description = "Tap-to-run RFCOMM server capability check"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+symbian-ui = { path = "../../../SDK/crates/symbian-ui" }
+symbian = { path = "../../../SDK/crates/symbian" }
+symbian-gfx = { path = "../../../SDK/crates/symbian-gfx" }
+
+[dev-dependencies]
+symbian-sim = { path = "../../../SDK/crates/symbian-sim" }
+symbian-ui = { path = "../../../SDK/crates/symbian-ui", features = ["testing"] }

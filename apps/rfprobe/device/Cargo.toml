@@ -1,0 +1,25 @@
+# Its own workspace root: a crate that defines #[panic_handler] cannot be built for the host
+# (cargo links the test harness against std, which already defines it). It only builds for ARM.
+[workspace]
+
+[package]
+name = "rfprobe-device"
+description = "Device entry point for rfprobe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+rfprobe = { path = ".." }
+symbian-app = { path = "../../../../SDK/crates/symbian-app" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+debug = false
+overflow-checks = false

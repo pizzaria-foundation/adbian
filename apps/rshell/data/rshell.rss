@@ -1,0 +1,23 @@
+/* The localisable resource: the caption and icon the S60 menu shows. */
+
+NAME RSHL
+
+#include <eikon.rh>
+#include <appinfo.rh>
+
+RESOURCE RSS_SIGNATURE { }
+RESOURCE TBUF { buf = ""; }
+
+/* Empty: the AppUi is ENoScreenFurniture; the Rust toolkit draws the softkey bar. */
+RESOURCE EIK_APP_INFO { }
+
+RESOURCE LOCALISABLE_APP_INFO r_rshell_localisable_app_info
+    {
+    short_caption = "RFCOMM shell";
+    caption_and_icon =
+        CAPTION_AND_ICON_INFO
+            {
+            caption = "RFCOMM shell";
+            number_of_icons = 0;
+            };
+    }

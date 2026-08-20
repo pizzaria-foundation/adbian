@@ -1,0 +1,22 @@
+# Its own workspace root: a crate defining #[panic_handler] cannot build for the host. ARM only.
+[workspace]
+
+[package]
+name = "rshell-device"
+description = "Device entry point for rshell"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+rshell = { path = ".." }
+symbian-app = { path = "../../../../SDK/crates/symbian-app" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

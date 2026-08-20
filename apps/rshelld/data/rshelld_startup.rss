@@ -1,0 +1,21 @@
+//  The start-up item, which is the only reason this package exists separately from apps/rshell.
+//
+//  It names this package's own executable, unlike bootctl's item (which points at bootd.exe) —
+//  there is no settings UI here to keep off the user's screen, the daemon *is* the thing to start.
+//  Hand-written rather than generated from the shared template (shim/launcher/data/startup.rss.in)
+//  so the path is stated here in full and reviewable; tools/symbuild prefers a hand-written
+//  data/<name>_startup.rss when one exists.
+//
+//  recovery: the platform defines exactly one policy, EStartupItemExPolicyNone — "do nothing"
+//  (sdk/epoc32/include/startupitem.hrh), and STARTUP_ITEM_INFO has no ordering field at all. So if
+//  this daemon dies it is not restarted by the platform, and nothing here can ask to start early.
+//  For an agent that only has to be reachable "some seconds after boot" both absences are
+//  acceptable; the alternative is to have bootd supervise it instead.
+
+#include <startupitem.rh>
+
+RESOURCE STARTUP_ITEM_INFO
+    {
+    executable_name = "!:\\sys\\bin\\rshelld.exe";
+    recovery = EStartupItemExPolicyNone;
+    }

@@ -1,0 +1,25 @@
+# Its own workspace root: a crate defining #[panic_handler] cannot build for the host. ARM only.
+[workspace]
+
+[package]
+name = "rshelld-device"
+description = "Device entry point for rshelld, the headless remote-shell agent"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+# default-features = false drops the `gui` feature, and with it symbian-ui and symbian-gfx. That
+# is a link requirement, not tidiness: the daemon build excludes shim_gfx.cpp, and --no-undefined
+# sees a referenced symbol before --gc-sections can sweep it.
+rshell = { path = "../../rshell", default-features = false }
+symbian-app = { path = "../../../../SDK/crates/symbian-app" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

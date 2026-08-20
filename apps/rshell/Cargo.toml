@@ -1,0 +1,26 @@
+[package]
+name = "rshell"
+description = "Remote-shell agent over Bluetooth RFCOMM"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The agent builds in two shapes from one source. `gui` is the tappable app with the on-screen
+# status; without it the same `Shell` is a headless daemon that can be started at boot. The UI
+# crates are optional rather than merely unused because the daemon link excludes shim_gfx.cpp,
+# and `--no-undefined` sees a referenced symbol before `--gc-sections` can sweep it — so an
+# unreachable `draw` is still a link error.
+[features]
+default = ["gui"]
+gui = ["symbian-ui", "symbian-gfx"]
+
+[dependencies]
+symbian = { path = "../../../SDK/crates/symbian" }
+symbian-ui = { path = "../../../SDK/crates/symbian-ui", optional = true }
+symbian-gfx = { path = "../../../SDK/crates/symbian-gfx", optional = true }
+symbian-app = { path = "../../../SDK/crates/symbian-app" }
+symbian-sys = { path = "../../../SDK/crates/symbian-sys" }
+
+[dev-dependencies]
+symbian-sim = { path = "../../../SDK/crates/symbian-sim" }
+symbian-ui = { path = "../../../SDK/crates/symbian-ui", features = ["testing"] }

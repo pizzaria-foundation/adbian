@@ -1,0 +1,13 @@
+# ADBian — an ADB-style remote shell and file bridge for Symbian S60, over Bluetooth RFCOMM.
+#
+# Its own workspace: the on-device agent and the RFCOMM probe. The SDK (the epoc toolkit, C++
+# shim and Symbian crates) is the sibling checkout at ../SDK, reached by path — the same
+# relationship the home-screen repo uses. Each app's `device/` crate is a separate workspace
+# root (a no_std staticlib with its own #[panic_handler] cannot build for the host test harness),
+# so only the host-testable library crates are members here.
+[workspace]
+resolver = "2"
+members = [
+    "apps/rshell",
+    "apps/rfprobe",
+]
