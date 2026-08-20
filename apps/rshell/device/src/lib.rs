@@ -6,4 +6,4 @@
 
 extern crate alloc;
 
-symbian_app::entry!(rshell::Shell::new());
+symbian_app::entry!(rshell::Viewer::new());

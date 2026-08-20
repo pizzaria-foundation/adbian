@@ -76,6 +76,23 @@ struct Put {
     acc: Vec<u8>,
 }
 
+/// The Publish & Subscribe contract between the daemon (rshelld) and the GUI panel (rshell).
+/// The category is the daemon's own SID (its UID3), so it defines the keys cap-free with an open
+/// read policy (`define_public`) and the panel — a different UID — reads them. Int-only, so the
+/// human-readable "recent activity" comes from tailing the daemon's log, not from here.
+pub mod pubsub {
+    /// rshelld's UID3 — the P&S category (the daemon's SID).
+    pub const CAT: u32 = 0xE0AA_00F2;
+    /// 0 down, 1 listening, 2 client connected.
+    pub const KEY_STATE: u32 = 1;
+    pub const KEY_CHANNEL: u32 = 2;
+    pub const KEY_CMDS: u32 = 3;
+    pub const KEY_CLIENTS: u32 = 4;
+    pub const STATE_DOWN: i32 = 0;
+    pub const STATE_LISTENING: i32 = 1;
+    pub const STATE_CONNECTED: i32 = 2;
+}
+
 pub struct Shell {
     started: bool,
     listener_up: bool,
@@ -97,6 +114,9 @@ pub struct Shell {
     exit: bool,
     /// The last few notable events, newest last, for the on-screen status.
     log_lines: Vec<String>,
+    /// Counters published to the panel over P&S.
+    cmds: i32,
+    clients: i32,
 }
 
 impl Shell {
@@ -120,6 +140,8 @@ impl Shell {
             reboot_requested: false,
             exit: false,
             log_lines: Vec::new(),
+            cmds: 0,
+            clients: 0,
         }
     }
 
@@ -133,17 +155,26 @@ impl Shell {
     }
 
     fn start(&mut self) {
+        // Publish state for the GUI panel (rshell) to read. define_public so a different-SID app
+        // can read; cap-free because CAT is this daemon's own SID. Best effort throughout.
+        let _ = symbian::prop::define_public(pubsub::CAT, pubsub::KEY_STATE);
+        let _ = symbian::prop::define_public(pubsub::CAT, pubsub::KEY_CHANNEL);
+        let _ = symbian::prop::define_public(pubsub::CAT, pubsub::KEY_CMDS);
+        let _ = symbian::prop::define_public(pubsub::CAT, pubsub::KEY_CLIENTS);
         match rfcomm::listen("rshell", 1) {
             Ok(ch) => {
                 self.listener_up = true;
                 self.channel = ch;
                 symbian::log!("rshell: listening, RFCOMM channel {}", ch as i32);
                 self.note(&format!("listening on channel {}", ch));
+                self.publish(pubsub::KEY_CHANNEL, ch as i32);
+                self.publish(pubsub::KEY_STATE, pubsub::STATE_LISTENING);
                 self.begin_accept();
             }
             Err(e) => {
                 symbian::log!("rshell: listen failed {:?}", e);
                 self.note(&format!("listen failed: {:?}", e));
+                self.publish(pubsub::KEY_STATE, pubsub::STATE_DOWN);
             }
         }
         // Resilience heartbeat, from here on.
@@ -157,6 +188,8 @@ impl Shell {
                 self.listener_up = true;
                 self.channel = ch;
                 symbian::log!("rshell: listener recovered, channel {}", ch as i32);
+                self.publish(pubsub::KEY_CHANNEL, ch as i32);
+                self.publish(pubsub::KEY_STATE, pubsub::STATE_LISTENING);
             }
         }
         if self.listener_up && self.client.is_none() {
@@ -184,6 +217,9 @@ impl Shell {
             self.put = None;
             symbian::log!("rshell: client on handle {}", handle);
             self.note("client connected");
+            self.clients += 1;
+            self.publish(pubsub::KEY_CLIENTS, self.clients);
+            self.publish(pubsub::KEY_STATE, pubsub::STATE_CONNECTED);
             self.send_ok("rshell ready");
             self.issue_recv();
         } else {
@@ -243,7 +279,15 @@ impl Shell {
             return;
         }
         let line = core::str::from_utf8(payload).unwrap_or("");
+        self.cmds += 1;
+        self.publish(pubsub::KEY_CMDS, self.cmds);
         self.dispatch(line);
+    }
+
+    /// Publish one P&S value for the GUI panel. Best effort — a failure here must never disturb
+    /// the shell.
+    fn publish(&self, key: u32, val: i32) {
+        let _ = symbian::prop::set(pubsub::CAT, key, val);
     }
 
     fn recv_put_data(&mut self, mut put: Put, data: &[u8]) {
@@ -823,6 +867,7 @@ impl Shell {
             let _ = rfcomm::close(h);
             symbian::log!("rshell: client {} dropped", h);
             self.note("client disconnected");
+            self.publish(pubsub::KEY_STATE, pubsub::STATE_LISTENING);
         }
         self.inbuf.clear();
         self.out.clear();
@@ -915,6 +960,158 @@ impl App for Shell {
     fn title(&self) -> &str {
         "RFCOMM shell"
     }
+}
+
+/// The GUI panel: a read-only dashboard over the daemon (rshelld). It does NOT open an RFCOMM
+/// listener, so it can be opened while the daemon is running — the whole reason the two used to
+/// conflict. It reads the daemon's Publish & Subscribe state and tails its log on a timer.
+#[cfg(feature = "gui")]
+pub struct Viewer {
+    alive: bool,
+    state: i32,
+    channel: i32,
+    cmds: i32,
+    clients: i32,
+    log: Vec<String>,
+    exit: bool,
+}
+
+#[cfg(feature = "gui")]
+impl Viewer {
+    pub fn new() -> Self {
+        // Refresh a couple of times a second; cheap P&S reads plus a small log tail.
+        let _ = symbian::timer_every(700);
+        let mut v = Viewer {
+            alive: false,
+            state: -1,
+            channel: -1,
+            cmds: 0,
+            clients: 0,
+            log: Vec::new(),
+            exit: false,
+        };
+        v.refresh();
+        v
+    }
+
+    fn refresh(&mut self) {
+        // is_running by UID is the liveness check: P&S values outlive the publisher within a boot,
+        // so a stale STATE could otherwise read "listening" after the daemon died.
+        self.alive = symbian::process::is_running(pubsub::CAT);
+        self.state = symbian::prop::get(pubsub::CAT, pubsub::KEY_STATE).unwrap_or(-1);
+        self.channel = symbian::prop::get(pubsub::CAT, pubsub::KEY_CHANNEL).unwrap_or(-1);
+        self.cmds = symbian::prop::get(pubsub::CAT, pubsub::KEY_CMDS).unwrap_or(0);
+        self.clients = symbian::prop::get(pubsub::CAT, pubsub::KEY_CLIENTS).unwrap_or(0);
+        self.log = tail_log(8);
+    }
+}
+
+#[cfg(feature = "gui")]
+impl Default for Viewer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "gui")]
+impl App for Viewer {
+    fn handle_raw(&mut self, ev: &symbian_ui::RawEvent) -> Handled {
+        if ev.kind == sys::SHIM_EV_TIMER {
+            self.refresh();
+            Handled::Consumed
+        } else {
+            Handled::Ignored
+        }
+    }
+
+    fn handle_key(&mut self, ev: KeyEvent, _theme: &Theme<'_>, _screen: Rect) -> Handled {
+        match ev.key {
+            Key::Softkey(Softkey::Right) | Key::End => {
+                self.exit = true;
+                Handled::Consumed
+            }
+            // When the daemon is down, the left softkey starts it. spawn (not start) so the GUI
+            // thread never blocks on WaitForRequest.
+            Key::Softkey(Softkey::Left) if !self.alive => {
+                if let Ok(path) = Utf16Path::new("rshelld.exe") {
+                    let _ = symbian::process::spawn(&path);
+                }
+                Handled::Consumed
+            }
+            _ => Handled::Ignored,
+        }
+    }
+
+    fn draw(&mut self, c: &mut symbian_ui::Canvas<'_>, theme: &Theme<'_>) {
+        let screen = Rect::from_size(c.size());
+        let frame = chrome::Frame::split(screen, theme, true, true);
+        chrome::clear(c, theme);
+        chrome::title_bar(c, frame.title, theme, "ADBian", None);
+        let left = if self.alive { None } else { Some("Start") };
+        chrome::softkey_bar(c, frame.softkeys, theme, [left, None, Some("Exit")]);
+
+        let line_h = theme.fonts.small.line_height().max(1);
+        let mut y = frame.content.y0;
+        let mut put = |c: &mut symbian_ui::Canvas<'_>, y: &mut i32, s: &str, col| {
+            if *y + line_h > frame.content.y1 {
+                return;
+            }
+            let r = Rect { y0: *y, y1: *y + line_h, ..frame.content };
+            c.draw_text_in(r, s, theme.fonts.small, col, Align::Start);
+            *y += line_h;
+        };
+
+        let head = if !self.alive {
+            String::from("Daemon: stopped")
+        } else if self.state == pubsub::STATE_CONNECTED {
+            format!("Daemon: client connected (ch {})", self.channel)
+        } else if self.state == pubsub::STATE_LISTENING {
+            format!("Daemon: listening (ch {})", self.channel)
+        } else {
+            String::from("Daemon: starting...")
+        };
+        let head_col = if self.alive { theme.palette.accent } else { theme.palette.dim };
+        put(c, &mut y, &head, head_col);
+        put(c, &mut y, &format!("commands: {}   clients: {}", self.cmds, self.clients), theme.palette.dim);
+        y += line_h / 2;
+        for line in &self.log {
+            put(c, &mut y, line, theme.palette.text);
+        }
+    }
+
+    fn should_exit(&self) -> bool {
+        self.exit
+    }
+
+    fn title(&self) -> &str {
+        "ADBian"
+    }
+}
+
+/// Read the last `n` lines of the daemon's log (C:\Data\logs_rshelld.txt). Best effort — an
+/// absent or unreadable file just yields no lines.
+#[cfg(feature = "gui")]
+fn tail_log(n: usize) -> Vec<String> {
+    let mut fs = ShimFs;
+    let Ok(path) = Utf16Path::new("C:\\Data\\logs_rshelld.txt") else {
+        return Vec::new();
+    };
+    let bytes = match fs::read(&mut fs, &path) {
+        Ok(Some(b)) => b,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<String> = text
+        .split('\n')
+        .map(|l| l.trim_end_matches('\r').trim())
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect();
+    let len = lines.len();
+    if len > n {
+        lines.drain(..len - n);
+    }
+    lines
 }
 
 /// `[u32 big-endian len][payload]`.
