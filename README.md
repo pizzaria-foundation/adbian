@@ -120,7 +120,7 @@ Sent to the agent, one line each. Paths use `\` and drive letters (`Z:` = ROM, `
 | Command | What it does |
 |---|---|
 | `exec <path>` | Spawn an executable on the phone; returns immediately (fire-and-forget). |
-| `reboot now` | Restart the phone (kills the system app). The literal word `now` is required; the reply is sent before the kill. |
+| `reboot now` | Hard-reset the phone by killing the file server (a genuine kernel reset). The literal word `now` is required; nothing is flushed, and the reply is sent before the reset. |
 | `ps <cat> <key>` | Read a Publish & Subscribe integer. Hex accepted, e.g. `ps 0xE0AA00F2 1`. |
 | `cenrep <repo> <key>` | Read a Central Repository value (reports it as int then string). |
 | `hal [attr]` | Read a HAL attribute; bare `hal` returns the machine UID. |

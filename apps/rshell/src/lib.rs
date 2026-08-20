@@ -53,10 +53,15 @@ const MAX_FILE: usize = 1024 * 1024;
 /// DATA payload size for streaming a file out.
 const DATA_CHUNK: usize = 4096;
 
-/// S60's System Application (`essysapp.exe`), read out of its own ROM image on the E72. The
-/// platform marks it system-critical, which is what makes killing it a restart rather than a
-/// missing status bar.
-const SYSAP_UID3: u32 = 0x2000_2532;
+/// The file server (`efile.exe`), UID3 read out of its ROM image on the E72. It is
+/// system-permanent, so killing it faults the kernel and the device resets — a genuine reboot.
+///
+/// The gentler candidates were tried first and measured on this handset: killing SysAp
+/// (`essysapp.exe`, 0x20002532) just respawns it (no reboot), and killing the window server
+/// (`EwSrv.exe`, 0x10003b20) triggers a clean power-OFF, not a restart. The file server is the
+/// only reachable process whose death actually RESETS the phone — at the cost of being a hard
+/// reset with nothing flushed, which is why `reboot` demands the literal `now`.
+const EFILE_UID3: u32 = 0x1000_39e3;
 /// The resilience heartbeat: often enough to re-arm a dropped accept promptly, rare enough to
 /// cost nothing on the battery.
 const SUPERVISION_MS: i32 = 5_000;
@@ -641,14 +646,16 @@ impl Shell {
         }
     }
 
-    /// `reboot now` — restart the handset by killing the process the platform treats as
+    /// `reboot now` — restart the handset by killing a process the kernel treats as
     /// system-critical.
     ///
-    /// There is no published restart call in this SDK. `starterclient.dll`'s `RStarterSession`
-    /// is the canonical one and its import library was never shipped here; the emulator copy
-    /// exports by ordinal only, so calling it would mean guessing an ordinal. What is left is
-    /// the platform's own rule: when a process marked system-critical dies, the kernel resets
-    /// the device. S60's System Application is such a process, so ending it *is* the restart.
+    /// There is no published restart call in this SDK (`starterclient.dll`'s `RStarterSession` is
+    /// the canonical one, but its import library was never shipped here and the device copy is a
+    /// stripped stub that exports by ordinal only). What is left is the platform's own rule: when
+    /// a system-permanent process dies, the kernel resets the device. Measured on this E72:
+    /// killing SysAp just respawns it (no reboot); killing the window server powers the phone OFF
+    /// (a clean shutdown, not a restart); killing the file server RESETS it. So `reboot` ends the
+    /// file server — a hard reset with nothing flushed.
     ///
     /// That makes this a blunt instrument and it is deliberately not spelled `reboot`: nothing
     /// gets a chance to flush, so a daemon halfway through a write loses that write. The literal
@@ -659,11 +666,11 @@ impl Shell {
     fn cmd_reboot(&mut self, arg: &str) {
         if arg.trim() != "now" {
             return self.send_err(
-                "usage: reboot now  (kills the system-critical SysAp; nothing is flushed first)",
+                "usage: reboot now  (hard reset via the file server; nothing is flushed first)",
             );
         }
         self.reboot_requested = true;
-        self.send_ok("rebooting: killing SysAp once this reply is on the wire");
+        self.send_ok("rebooting: killing the file server once this reply is on the wire");
     }
 
     /// `ps <cat> <key>` — read one Publish & Subscribe integer. Both arguments are hex or
@@ -809,11 +816,12 @@ impl Shell {
         }
         if self.out.is_empty() {
             if self.reboot_requested {
-                symbian::log!("rshell: reboot requested, killing SysAp");
-                let _ = symbian::process::kill(SYSAP_UID3);
-                // If the kill did not take, say so rather than leaving the client waiting.
+                symbian::log!("rshell: reboot requested, killing the file server");
+                let _ = symbian::process::kill(EFILE_UID3);
+                // If the kill returned without resetting the device, say so rather than leaving
+                // the client waiting.
                 self.reboot_requested = false;
-                self.send_err("SysAp kill returned but the phone is still up");
+                self.send_err("file-server kill returned but the phone is still up");
                 self.kick_tx();
                 return;
             }
