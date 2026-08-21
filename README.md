@@ -68,22 +68,55 @@ start it by hand.
 ## Quick start
 
 ```sh
-# interactive
-python3 client/rshell.py <MAC> [channel]
+# interactive — no address, no channel: it finds the phone and the channel itself
+python3 client/rshell.py
   Z:\> cd C:\Data
   C:\Data> ls
-  C:\Data> get C:\Data\logs_rshelld.txt ./log.txt
+  C:\Data> pull C:\Data\logs_rshelld.txt .
+  C:\Data> sideload ../cal/apps/cal/build/cal.sis
   C:\Data> exit          # leaves; the agent keeps running
 
-# batch (no prompt; agent stays connectable for the next call)
-python3 client/rsh.py <MAC> <channel> 'ls C:\sys\bin' 'stat C:\Data\log.txt'
-python3 client/rsh.py <MAC> <channel> --get 'Z:\sys\bin\startup.exe' out/startup.exe
-python3 client/rsh.py <MAC> <channel> --mget files.txt out/     # one remote path per line
+# one-shot (no prompt; agent stays connectable for the next call)
+python3 client/rsh.py 'ls C:\sys\bin' 'stat C:\Data\log.txt'
+python3 client/rsh.py --pull 'Z:\sys\bin\startup.exe' out/
+python3 client/rsh.py --mpull files.txt out/         # one remote path per line
+python3 client/rsh.py --sideload build/cal.sis
+
+# from the SDK's front door, which is usually where you already are
+../SDK/tools/epoc sh 'ping'
+../SDK/tools/epoc sideload apps/cal/build/cal.sis
 ```
 
-**Finding the channel.** The RFCOMM channel is allocated at runtime and advertised as the SPP
-record named `rshell`. Pass it if you know it; omit it in `rshell.py` to scan 1..30; or read it
-from the phone panel / `C:\Data\logs_rshelld.txt` (`listening, RFCOMM channel N`).
+Override the guesses when you want to: `rshell.py nokia` (a piece of a paired device's name),
+`rshell.py 3C:F7:2A:6B:0B:4A 13`, or `rsh.py --device nokia --channel 13 'ping'`.
+
+**Finding the phone.** With no argument the client takes the device that answered last, or the
+only paired one, or — with several paired — the one whose SDP says it is running the agent.
+
+**Finding the channel.** The RFCOMM channel is allocated at boot, so it moves; it is also
+*advertised*, as an SPP service record named `rshell`. The client asks SDP for it (a
+ServiceSearchAttributeRequest spoken straight over an L2CAP socket — no `sdptool`, no PyBluez),
+which answers in well under a second. Failing that it tries the channel that worked last time,
+and failing *that* it scans 1..30 in ten threads. Whatever answered is cached in
+`~/.cache/adbian/devices.json`. Reading the channel off the phone screen is no longer part of
+anyone's day.
+
+### Sideloading
+
+A package pushed over OBEX (`epoc push`) lands in the phone's **Inbox** — fine for one file,
+tedious when you are reinstalling a build every ten minutes. `sideload` puts it in
+`C:\Data\_app_install\` instead:
+
+```sh
+../SDK/tools/epoc sideload apps/cal/build/cal.sis
+#   push …/cal.sis -> C:\Data\_app_install\cal.sis (191 KB)
+#   ready to install: C:\Data\_app_install\cal.sis
+```
+
+Then on the phone: **File mgr. > Phone memory > Data > _app_install >** tap the package. The
+leading underscore is the point — it sorts the folder to the top of `C:\Data`, so getting there
+is two keypresses rather than a hunt. The installer still has to be tapped: the agent can write
+files, but nothing here asks `SWInstall` to install one.
 
 ---
 
@@ -136,11 +169,21 @@ These run on your computer, not the phone.
 
 | Where | Verb | What it does |
 |---|---|---|
-| `rshell.py` | `get <remote> <local>` | `cat` the remote file and write it to a local file. |
-| `rshell.py` | `put <local> <remote>` | Push a local file to the phone (`put` protocol). |
+| `rshell.py` | `pull <remote…> [dir]` | Download. Big files come down in `cat` ranges, so size is not a limit. |
+| `rshell.py` | `push <local…> [remote]` | Upload; globs expand here, a remote directory keeps the local names. |
+| `rshell.py` | `sideload <file.sis…>` | Upload into `C:\Data\_app_install\`, ready to tap. |
+| `rshell.py` | `logs [app]` | Show `C:\Data\logs_<app>.txt` (default `rshelld`). |
+| `rshell.py` | `lls [dir]` / `lcd <dir>` / `!<cmd>` | Look around, and run things, on *this* machine. |
 | `rshell.py` | `help` / `exit` | Command list / leave (the agent keeps running). |
-| `rsh.py` | `--get <remote> <local>` | Single pull (creates the parent dir). |
-| `rsh.py` | `--mget <listfile> <outdir>` | Pull every remote path in `<listfile>`, reconnecting on a dropped link. |
+| `rsh.py` | `--pull <remote> [dir]` | Single download (creates the parent dir). |
+| `rsh.py` | `--mpull <listfile> <outdir>` | Download every remote path in `<listfile>`, reconnecting on a dropped link. |
+| `rsh.py` | `--push <local> [remote]` | Single upload. |
+| `rsh.py` | `--sideload <file…>` | Into `C:\Data\_app_install\`. |
+
+`get`/`put` still work as aliases of `pull`/`push`, and `--get`/`--mget` as aliases of
+`--pull`/`--mpull`, so old notes and scripts keep working. A dropped link is reconnected in
+place: the interactive session keeps its working directory and your history, which matters
+because Bluetooth drops and the daemon re-arms `accept` every 5 s.
 
 ---
 
@@ -204,7 +247,7 @@ Host tests: `cargo test -p rshell`.
 apps/rshell     the agent's source (one Shell) + the GUI panel (Viewer, gui feature)
 apps/rshelld    the headless daemon build (reuses the rshell crate, no gui)
 apps/rfprobe    a tap-to-run "can this phone be an RFCOMM server?" probe
-client/         rshell.py (interactive) + rsh.py (batch, --get/--mget)
+client/         btlink.py (discovery, framing, transfers) + rshell.py (interactive) + rsh.py
 ```
 
 Depends on `../SDK` by path. The RFCOMM shim (`shim/src/shim_btsock.cpp`, `shim_bt.cpp`) and the

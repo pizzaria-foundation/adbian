@@ -402,18 +402,7 @@ impl Shell {
     fn cmd_cat(&mut self, arg: &str) {
         // Split off an optional trailing "<off> <len>". A path may contain spaces, so the range
         // is recognised only when the last two words are both numbers.
-        let mut path_part = arg.trim();
-        let mut range: Option<(u64, usize)> = None;
-        let words: Vec<&str> = arg.trim().split_whitespace().collect();
-        if words.len() >= 3 {
-            if let (Some(off), Some(len)) =
-                (parse_num(words[words.len() - 2]), parse_num(words[words.len() - 1]))
-            {
-                range = Some((off as u64, len as usize));
-                let cut = arg.trim().rfind(words[words.len() - 2]).unwrap_or(arg.len());
-                path_part = arg.trim()[..cut].trim();
-            }
-        }
+        let (path_part, range) = split_range(arg);
 
         let path = resolve_path(&self.cwd, path_part);
         let mut d = ShimFs;
@@ -1186,6 +1175,29 @@ fn parse_num(s: &str) -> Option<u32> {
     }
 }
 
+/// Split `cat`'s argument into the path and an optional trailing `<off> <len>`.
+///
+/// A path may contain spaces, so a range is recognised only when the *last two* words are both
+/// numbers — and the two words are then removed by their **length**, not by searching the string
+/// for them. Searching was the original bug: `… \cal.sis 65536 65536` found the last `65536`
+/// first, so the path kept a number glued to it and a perfectly present file answered NotFound.
+/// Every chunked read whose offset happened to equal its length hit it.
+fn split_range(arg: &str) -> (&str, Option<(u64, usize)>) {
+    let trimmed = arg.trim();
+    let words: Vec<&str> = trimmed.split_whitespace().collect();
+    if words.len() >= 3 {
+        if let (Some(off), Some(len)) =
+            (parse_num(words[words.len() - 2]), parse_num(words[words.len() - 1]))
+        {
+            let cut = trimmed.len() - words[words.len() - 1].len();
+            let cut = trimmed[..cut].trim_end().len();
+            let cut = cut - words[words.len() - 2].len();
+            return (trimmed[..cut].trim_end(), Some((off as u64, len as usize)));
+        }
+    }
+    (trimmed, None)
+}
+
 /// Two numbers separated by whitespace, for the `ps`/`cenrep` verbs.
 fn two_numbers(arg: &str) -> Option<(u32, u32)> {
     let mut it = arg.split_whitespace();
@@ -1280,6 +1292,26 @@ mod tests {
         assert_eq!(parent_of("Z:\\sys\\bin\\"), "Z:\\sys\\");
         assert_eq!(parent_of("Z:\\sys\\"), "Z:\\");
         assert_eq!(parent_of("Z:\\"), "Z:\\");
+    }
+
+    #[test]
+    fn a_range_whose_offset_reads_like_its_length_still_keeps_the_path() {
+        // The chunked pull that found this: 64 KB at offset 64 KB.
+        assert_eq!(
+            split_range("C:\\Data\\_app_install\\cal.sis 65536 65536"),
+            ("C:\\Data\\_app_install\\cal.sis", Some((65536, 65536)))
+        );
+        assert_eq!(
+            split_range("C:\\Data\\x.txt 0 4096"),
+            ("C:\\Data\\x.txt", Some((0, 4096)))
+        );
+        // No range: a bare path, even one that ends in digits.
+        assert_eq!(split_range("C:\\Data\\log2.txt"), ("C:\\Data\\log2.txt", None));
+        // A path with spaces keeps them, and only trailing numbers count as a range.
+        assert_eq!(
+            split_range("C:\\Data\\my file 2.txt"),
+            ("C:\\Data\\my file 2.txt", None)
+        );
     }
 
     #[test]
