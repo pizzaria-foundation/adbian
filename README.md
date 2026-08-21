@@ -45,23 +45,40 @@ the sibling checkout `../SDK`.
 
 ## Setup
 
-Pairing and OBEX push use the SDK's shared Bluetooth tools.
+This is the one part that cannot use ADBian, because ADBian is what is being installed. The
+agent has to reach the phone some other way, and the SDK's `serve.py` is that way: it serves a
+directory over HTTP with the `application/vnd.symbian.install` MIME type, which is what makes
+the phone's browser hand the file to the installer instead of saving an unknown blob.
 
 ```sh
 # 1. Pair once (BT 2.0, legacy PIN)
 python3 ../SDK/tools/btpair.py <MAC> 0000
 
-# 2. Build and push the agent (signed; autostarts on boot)
+# 2. Build the agent (signed; autostarts on boot)
 ../SDK/tools/epoc build apps/rshelld
-python3 ../SDK/tools/btpush.py <MAC> apps/rshelld/build/rshelld.sisx
 
 # 3. (optional) the on-phone panel
 ../SDK/tools/epoc build apps/rshell
-python3 ../SDK/tools/btpush.py <MAC> apps/rshell/build/rshell.sis
+
+# 4. Serve them, then open http://<this-machine>:8000/ in the phone's browser
+python3 ../SDK/tools/serve.py apps/rshelld/build 8000
 ```
 
 Install both on the phone (App manager) and reboot. `rshelld` comes up on its own — you never
 start it by hand.
+
+**Updating the agent is the one install that cannot be done casually.** The installer will not
+replace the image of a running process, and `rshelld` is running — it is what `sideload` talks to.
+So: sideload the new package, then on the phone install it **last**, after everything else, and
+reboot. If App mgr. refuses, the daemon is still up; reboot first and install before anything
+reconnects to it. Nothing else in this project has that constraint, because nothing else in this
+project is the channel it arrives through.
+
+Once the agent is on the phone, nothing needs the browser again: `sideload` puts every later
+build in `C:\Data\_app_install\`, which is one tap in File mgr. (The SDK used to carry an OBEX
+object push for this bootstrap. It went: it buried every package in Messaging, and the E72 drops
+its ACL link after each transfer, so every second push failed as though the phone had no OBEX
+at all.)
 
 ---
 
@@ -72,7 +89,7 @@ start it by hand.
 python3 client/rshell.py
   Z:\> cd C:\Data
   C:\Data> ls
-  C:\Data> pull C:\Data\logs_rshelld.txt .
+  C:\Data> pull C:\Data\_logs\rshelld.txt .
   C:\Data> sideload ../cal/apps/cal/build/cal.sis
   C:\Data> exit          # leaves; the agent keeps running
 
@@ -172,7 +189,7 @@ These run on your computer, not the phone.
 | `rshell.py` | `pull <remote…> [dir]` | Download. Big files come down in `cat` ranges, so size is not a limit. |
 | `rshell.py` | `push <local…> [remote]` | Upload; globs expand here, a remote directory keeps the local names. |
 | `rshell.py` | `sideload <file.sis…>` | Upload into `C:\Data\_app_install\`, ready to tap. |
-| `rshell.py` | `logs [app]` | Show `C:\Data\logs_<app>.txt` (default `rshelld`). |
+| `rshell.py` | `logs [app] [-f]` | Show `C:\Data\_logs\<app>.txt` (default `rshelld`). `-f` follows it — it polls `stat` and reads only what is new, so it also reports the restart when the file passes its size cap. |
 | `rshell.py` | `lls [dir]` / `lcd <dir>` / `!<cmd>` | Look around, and run things, on *this* machine. |
 | `rshell.py` | `help` / `exit` | Command list / leave (the agent keeps running). |
 | `rsh.py` | `--pull <remote> [dir]` | Single download (creates the parent dir). |
@@ -193,7 +210,7 @@ Open the **rshell** app on the handset to see a live dashboard of the daemon:
 
 - **Daemon state** — `stopped` / `listening (ch N)` / `client connected (ch N)`.
 - **Counters** — commands handled, clients accepted.
-- **Recent activity** — the tail of `C:\Data\logs_rshelld.txt`.
+- **Recent activity** — the tail of `C:\Data\_logs\rshelld.txt`.
 - **Start** (left softkey) — appears only when the daemon is down, to (re)launch it.
 
 The panel is read-only and opens no Bluetooth listener, so it is safe to run alongside the daemon.

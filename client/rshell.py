@@ -33,7 +33,8 @@ Host commands (run here, on your computer):
     pull <remote...> [dir]    download, in ranges, so file size is not a limit
     sideload <file.sis...>    put packages in C:\Data\_app_install\ — the folder that sorts to
                               the top of C:\Data in the phone's file browser, ready to tap
-    logs [app]                show C:\Data\logs_<app>.txt (default: rshelld)
+    logs [app] [-f]           show C:\Data\_logs\<app>.txt (default: rshelld); -f follows it,
+                              reprinting as the app writes, until Ctrl-C
     lls [dir] | lcd <dir>     list / change the directory on THIS machine
     !<command>                run a shell command here
     help                      this list        exit / Ctrl-D   leave (agent keeps running)
@@ -52,11 +53,12 @@ import glob
 import os
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import btlink
-from btlink import INSTALL_DIR, Link, human, read_reply, recv_frame, send_frame, try_connect
+from btlink import INSTALL_DIR, Link, human, log_path, read_reply, recv_frame, send_frame, try_connect
 
 HISTORY = os.path.join(btlink.CACHE_DIR, "history")
 
@@ -187,12 +189,56 @@ def cmd_sideload(link: Link, args: list[str]) -> None:
     )
 
 
+#: How long to wait between size checks while following a log. The phone answers a `stat` in
+#: milliseconds, and a diagnostic that costs a Bluetooth round trip every second is cheap; going
+#: much below this spends radio to watch a file that a human is reading.
+FOLLOW_POLL_S = 1.0
+#: Bytes per range read while following. Far under the agent's frame limit, so a burst of
+#: output arrives in a few reads rather than one that the daemon refuses.
+FOLLOW_CHUNK = 32 * 1024
+
+
 def cmd_logs(link: Link, args: list[str]) -> None:
-    app = args[0] if args else "rshelld"
-    path = app if "\\" in app else f"C:\\Data\\logs_{app}.txt"
-    ok, text, data = link.command(f"cat {path}")
-    show(data)
-    print(f"{'OK' if ok else 'ERR'}: {text}")
+    follow = any(a in ("-f", "--follow") for a in args)
+    rest = [a for a in args if a not in ("-f", "--follow")]
+    path = log_path(rest[0] if rest else "rshelld")
+
+    if not follow:
+        ok, text, data = link.command(f"cat {path}")
+        show(data)
+        print(f"{'OK' if ok else 'ERR'}: {text}")
+        return
+
+    # Follow by polling `stat` and reading only what is new. There is no push notification in
+    # the protocol and there should not be one for this: the agent is single-client and
+    # single-threaded, so a subscription would hold the session that everything else needs.
+    print(f"--- following {path}  (Ctrl-C to stop)")
+    offset = 0
+    try:
+        while True:
+            size = link.size_of(path)
+            if size is None:
+                # Not there yet. An app with DEBUG=0, or one that has not logged its first
+                # line — both are ordinary, so this waits rather than failing.
+                time.sleep(FOLLOW_POLL_S)
+                continue
+            if size < offset:
+                # `fs::append_capped` starts the file over at LOG_MAX rather than dropping the
+                # oldest half, so a shrink is not corruption — it is the cap, and everything
+                # before it is gone. Say so, because a silent jump reads as lost output.
+                print("--- log restarted (it passed its size cap)")
+                offset = 0
+            while size > offset:
+                n = min(size - offset, FOLLOW_CHUNK)
+                ok, text, data = link.command(f"cat {path} {offset} {n}")
+                if not ok:
+                    print(f"ERR: {text}")
+                    break
+                show(data)
+                offset += n
+            time.sleep(FOLLOW_POLL_S)
+    except KeyboardInterrupt:
+        print()
 
 
 def do_command(link: Link, line: str) -> None:

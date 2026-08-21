@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 r"""One-shot driver for the phone's rshell agent: connects, does the work, leaves it running.
 
-    rsh.py 'ls Z:\sys\bin' 'cat C:\Data\logs_cal.txt'
+    rsh.py 'ls Z:\sys\bin' 'cat C:\Data\_logs\cal.txt'
     rsh.py --device nokia 'ping'
     rsh.py --channel 13 'hal'
     rsh.py --pull 'Z:\sys\bin\sysstart.exe' out/            pull one file (any size)
     rsh.py --mpull files.txt out/                           one remote path per line
     rsh.py --push apps/cal/build/cal.sis 'C:\Data'          upload
     rsh.py --sideload apps/cal/build/cal.sis                drop it in C:\Data\_app_install\
+    rsh.py --logs connd                                     print C:\Data\_logs\connd.txt
+    rsh.py --logs connd -f                                  and keep printing what it adds
 
 The device and the RFCOMM channel are discovered (paired list + SDP + cache); name them only
 when you want to override that. Deliberately does NOT send `quit` — the agent stays connectable
@@ -16,11 +18,56 @@ for the next call. Exit status is non-zero if any command or transfer failed.
 
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import btlink
-from btlink import Link, read_reply, send_frame, try_connect  # re-exported for old callers
+from btlink import Link, log_path, read_reply, send_frame, try_connect  # re-exported for old callers
+
+#: Seconds between size checks while following a log. Matches rshell.py's interactive follow.
+FOLLOW_POLL_S = 1.0
+#: Bytes per range read while following, well under the agent's frame limit.
+FOLLOW_CHUNK = 32 * 1024
+
+
+def follow(link: Link, path: str) -> int:
+    """Print `path` and everything appended to it until interrupted. Returns a failure count.
+
+    Polls `stat` and reads only the new bytes: the protocol has no push notification, and it
+    should not grow one for this — the agent is single-client and single-threaded, so a
+    subscription would hold the session everything else needs.
+    """
+    offset = 0
+    failures = 0
+    try:
+        while True:
+            size = link.size_of(path)
+            if size is None:
+                # No file yet: DEBUG=0, or the app has not written its first line. Both are
+                # ordinary, so wait rather than fail.
+                time.sleep(FOLLOW_POLL_S)
+                continue
+            if size < offset:
+                # `fs::append_capped` starts the file over at its cap rather than dropping the
+                # oldest half, so a shrink is the cap, not corruption — and what came before is
+                # gone. Said out loud, because a silent jump reads as lost output.
+                print("--- log restarted (it passed its size cap)")
+                offset = 0
+            while size > offset:
+                n = min(size - offset, FOLLOW_CHUNK)
+                ok, text, data = link.command(f"cat {path} {offset} {n}")
+                if not ok:
+                    print(f"--- ERR: {text}")
+                    failures += 1
+                    break
+                sys.stdout.write(data.decode("utf-8", "replace"))
+                sys.stdout.flush()
+                offset += n
+            time.sleep(FOLLOW_POLL_S)
+    except KeyboardInterrupt:
+        print()
+    return failures
 
 
 def connect(mac=None, ch=None, tries=6, wait=3.0):
@@ -97,6 +144,23 @@ def main() -> int:
             except (IOError, OSError) as e:
                 print(f"ERR {local}: {e}")
                 failures += 1
+
+        elif rest and rest[0] == "--logs":
+            args = rest[1:]
+            follow_it = any(a in ("-f", "--follow") for a in args)
+            names = [a for a in args if a not in ("-f", "--follow")]
+            path = log_path(names[0] if names else "rshelld")
+            if follow_it:
+                print(f"--- following {path}  (Ctrl-C to stop)")
+                failures += follow(link, path)
+            else:
+                ok, text, data = link.command(f"cat {path}")
+                sys.stdout.write(data.decode("utf-8", "replace"))
+                if data and not data.endswith(b"\n"):
+                    print()
+                if not ok:
+                    print(f"--- ERR: {text}")
+                    failures += 1
 
         elif rest and rest[0] == "--sideload":
             for local in rest[1:]:

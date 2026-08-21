@@ -44,6 +44,19 @@ SERVICE_NAME = "rshell"
 #: phone's file browser, which is the difference between "two taps" and "scroll and hunt".
 INSTALL_DIR = r"C:\Data\_app_install"
 
+#: Where the SDK's `symbian::log!` writes: one file per app, `<app>.txt`. Must match
+#: `DATA_LOG_DIR` in ../SDK/crates/symbian/src/lib.rs — this is the whole contract between an
+#: app logging on the phone and anything reading it from here.
+#:
+#: The underscore is the same trick as INSTALL_DIR's: it sorts to the top of C:\Data in the
+#: phone's own file browser, so the two directories a person opens by hand sit together.
+LOG_DIR = r"C:\Data\_logs"
+
+
+def log_path(app: str) -> str:
+    """The remote path of an app's log. A name with a backslash in it is already a path."""
+    return app if "\\" in app else f"{LOG_DIR}\\{app}.txt"
+
 #: The daemon refuses an inbound frame larger than this (MAX_FRAME in apps/rshell/src/lib.rs),
 #: so a put is streamed in pieces comfortably under it.
 PUT_CHUNK = 128 * 1024

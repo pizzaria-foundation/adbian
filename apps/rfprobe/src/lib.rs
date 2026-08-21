@@ -33,7 +33,7 @@ use symbian::fs::{self, ShimFs, Utf16Path};
 use symbian_gfx::Align;
 use symbian_ui::{chrome, App, Handled, Key, KeyEvent, Rect, Softkey, Theme};
 
-/// Where the findings land. `C:\Data` needs no capability, so `epoc db pull` and any on-device
+/// Where the findings land. `C:\Data` needs no capability, so `epoc sh --pull` and any on-device
 /// file manager can reach it; the name matches the `btsock` probe's section so a reader looking
 /// for one file finds it whichever way the check was run.
 const OUT_PATH: &str = "C:\\Data\\dump-71-btsock.txt";

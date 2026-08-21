@@ -1085,12 +1085,17 @@ impl App for Viewer {
     }
 }
 
-/// Read the last `n` lines of the daemon's log (C:\Data\logs_rshelld.txt). Best effort — an
+/// Read the last `n` lines of the daemon's log (`C:\Data\_logs\rshelld.txt`). Best effort — an
 /// absent or unreadable file just yields no lines.
+///
+/// The path comes from `symbian::log::data_path` rather than a literal: the daemon writes through
+/// `symbian::log!`, so the SDK owns where that lands, and a copy of the path here is a copy that
+/// goes stale silently — the panel would show an empty log and look like a daemon that had
+/// stopped writing.
 #[cfg(feature = "gui")]
 fn tail_log(n: usize) -> Vec<String> {
     let mut fs = ShimFs;
-    let Ok(path) = Utf16Path::new("C:\\Data\\logs_rshelld.txt") else {
+    let Ok(path) = symbian::log::data_path("rshelld") else {
         return Vec::new();
     };
     let bytes = match fs::read(&mut fs, &path) {
