@@ -105,7 +105,7 @@ python3 client/rsh.py --sideload build/cal.sis
 ```
 
 Override the guesses when you want to: `rshell.py nokia` (a piece of a paired device's name),
-`rshell.py 3C:F7:2A:6B:0B:4A 13`, or `rsh.py --device nokia --channel 13 'ping'`.
+`rshell.py 00:1B:AF:12:34:56 13`, or `rsh.py --device nokia --channel 13 'ping'`.
 
 **Finding the phone.** With no argument the client takes the device that answered last, or the
 only paired one, or — with several paired — the one whose SDP says it is running the agent.

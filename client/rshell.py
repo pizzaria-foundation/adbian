@@ -3,7 +3,7 @@ r"""An interactive shell on the phone, over Bluetooth RFCOMM.
 
     rshell.py                      find the phone and the channel by itself
     rshell.py nokia                a paired device by a piece of its name
-    rshell.py 3C:F7:2A:6B:0B:4A 13 an address and a channel, when you want no guessing
+    rshell.py 00:1B:AF:12:34:56 13 an address and a channel, when you want no guessing
 
 The channel the daemon listens on is allocated at boot, so it moves; it is also *advertised*,
 and that is what we ask. SDP first (instant), then the channel that worked last time, then a
